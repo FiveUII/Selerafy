@@ -17,5 +17,5 @@ developer.spotify.com
 
 cek_koneksi.py masih belum bagus jadi disarankan langsung cek di selerafy.py nya
 
-playlist harus public dan tidak ada lagu impor dari luar (nggak dari spotify)
+Playlist harus public dan tidak ada lagu impor dari luar (nggak dari spotify)
 , disarankan menggunakan playlist buatan sendiri atau orang lain jangan buatan spotify.
