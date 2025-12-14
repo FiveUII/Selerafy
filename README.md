@@ -2,15 +2,17 @@ Biar bisa jalan
 
 Download datasetnya disini :
 https://www.kaggle.com/datasets/rodolfofigueroa/spotify-12m-songs
-download yang zip
-lalu rename datasetnya menjadi dataset_spotify_tracks.csv
-file asli 400 MB x_x
+, download yang zip
+, lalu rename datasetnya menjadi dataset_spotify_tracks.csv
+, file asli 400 MB (x_x) 1.2+ juta lagu spotify.
 
 Buat API spotify di:
 developer.spotify.com
-ambil client id dan client secret setelah membuat API
-buat folder .streamlit, lalu buat file secrets.toml untuk menaruh client id dan client secret
+, ambil client id dan client secret setelah membuat API
+, buat folder .streamlit, lalu buat file secrets.toml untuk menaruh client id dan client secret.
 
+cek_koneksi.py masih belum bagus jadi disarankan langsung cek di selerafy.py nya
 
+Ribet banget infokan jasa kompres dataset tapi tetap csv wkwk.
 
-Ribet banget wkwk.
+Ok Google "Can you compress a dataset file without compressing" 
