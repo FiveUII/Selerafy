@@ -139,7 +139,7 @@ def get_playlist_features(playlist_url, sp, lookup_dict):
 
 # --- 6. USER INTERFACE (UI) ---
 
-st.title("🔥 Spotify Smart Matcher")
+st.title("🔥 Selerafy (Cocokkan Musik Sesuai Playlistmu!)")
 st.markdown("Algoritma: **Cosine Similarity + Normalisasi Data**")
 
 if song_dict:
