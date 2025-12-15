@@ -10,6 +10,7 @@ import re
 import matplotlib.pyplot as plt
 import seaborn as sns
 import random
+from spotipy.cache_handler import MemoryCacheHandler
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Selerafy (Pencocokan Lagu Spotify)", page_icon="🔥", layout="centered")
@@ -142,8 +143,22 @@ st.title("🔥 Spotify Smart Matcher")
 st.markdown("Algoritma: **Cosine Similarity + Normalisasi Data**")
 
 if song_dict:
-    auth_manager = SpotifyClientCredentials(client_id=CLIENT_ID, client_secret=CLIENT_SECRET)
-    sp = spotipy.Spotify(auth_manager=auth_manager)
+    def get_spotify_client():
+        try:
+            # cache_handler=MemoryCacheHandler() artinya token cuma disimpan di RAM sementara
+            # Begitu aplikasi restart/rerun, token lama dibuang. Selalu dapat token baru.
+            auth_manager = SpotifyClientCredentials(
+                client_id=CLIENT_ID, 
+                client_secret=CLIENT_SECRET,
+                cache_handler=MemoryCacheHandler() 
+            )
+            return spotipy.Spotify(auth_manager=auth_manager)
+        except Exception as e:
+            st.error(f"Gagal login Spotify: {e}")
+            return None
+
+    # Panggil fungsinya
+    sp = get_spotify_client()
 
     # Input Playlist
     url = st.text_input("1. Paste Link Playlist Sumber (Contoh: Playlist Rock/Pop kamu):")
@@ -219,58 +234,93 @@ if song_dict:
                         ax.set_title(f"Distribusi {feature_to_plot.capitalize()}")
                         
                         st.pyplot(fig)
-                # --- SELESAI KODE VISUALISASI ---
-                # Input Target
+ # ... (Kode atas tetap sama) ...
+                
+                # --- INPUT LAGU TARGET ---
                 st.subheader("2. Bandingkan dengan Lagu Target")
                 track_url = st.text_input("Paste Link Lagu Target:")
                 
                 if track_url:
+                    # BERSIHKAN LINK DARI SPASI (PENTING!)
+                    track_url = track_url.strip() 
+                    
                     try:
-                        tid = track_url.split("/")[-1].split("?")[0]
+                        # 1. Ambil ID & Metadata Lagu
+                        if "?" in track_url:
+                            tid = track_url.split("/")[-1].split("?")[0]
+                        else:
+                            tid = track_url.split("/")[-1]
+                            
                         t_info = sp.track(tid)
                         t_name = t_info['name']
-                        t_key = clean_track_name(t_name)
+                        artist_name = t_info['artists'][0]['name']
                         
-                        # Cari fitur lagu target
-                        t_feats = song_dict.get(t_key)
-                        
+                        # Tampilkan Gambar & Nama Dulu
                         col1, col2 = st.columns([1, 3])
                         with col1:
                             st.image(t_info['album']['images'][0]['url'])
                         
                         with col2:
                             st.subheader(t_name)
-                            st.write(f"Artis: **{t_info['artists'][0]['name']}**")
+                            st.write(f"Artis: **{artist_name}**")
+                        
+                        # 2. PROSES PENGAMBILAN FITUR (Sistem Hybrid)
+                        final_feats = None
+                        source_msg = ""
+                        
+                        # USAHA 1: Coba Ambil Live dari Spotify API
+                        try:
+                            audio_features_raw = sp.audio_features(tid)
+                            if audio_features_raw and audio_features_raw[0]:
+                                raw = audio_features_raw[0]
+                                final_feats = [
+                                    raw['danceability'], raw['energy'], raw['valence'], 
+                                    raw['acousticness'], raw['loudness'], raw['tempo'], 
+                                    raw['instrumentalness']
+                                ]
+                                source_msg = "✅ Data Audio: LIVE dari Spotify API"
+                        except Exception as e:
+                            # Kalau 403/Error, diam saja dan lanjut ke rencana B
+                            print(f"Gagal ambil live: {e}") 
+                        
+                        # USAHA 2: Kalau Live Gagal, Cari di Database CSV (Kaggle)
+                        if final_feats is None:
+                            t_key = clean_track_name(t_name)
+                            final_feats = song_dict.get(t_key)
+                            if final_feats:
+                                source_msg = "⚠️ Gagal akses API Live (Error 403), tapi data ditemukan di Database CSV!"
+                        
+                        # 3. HITUNG & TAMPILKAN HASIL
+                        if final_feats:
+                            st.caption(source_msg)
                             
-                            if t_feats:
-                                # --- PROSES PERHITUNGAN BARU ---
-                                final_score = calculate_similarity(p_features, t_feats)
-                                
-                                # Visualisasi Warna
-                                if final_score >= 80:
-                                    color = "#2ecc71" # Hijau
-                                    msg = "MATCHING BANGET! (Vibe Serupa)"
-                                elif final_score >= 50:
-                                    color = "#f1c40f" # Kuning
-                                    msg = "Lumayan Mirip..."
-                                else:
-                                    color = "#e74c3c" # Merah
-                                    msg = "Jauh Banget (Beda Genre)"
-                                
-                                st.markdown(f"<h1 style='color:{color}'>{final_score:.1f}%</h1>", unsafe_allow_html=True)
-                                st.progress(int(final_score))
-                                st.caption(msg)
-                                
-                                # Debugging (Opsional: Matikan kalau sudah oke)
-                                with st.expander("Lihat Data Mentah (Untuk Debug)"):
-                                    st.write(f"Fitur Lagu Target: {t_feats}")
-                                    st.write("Fitur yang dipakai: Danceability, Energy, Valence, Acoustic, Loudness, Tempo, Instrumental")
+                            # Hitung Cosine Similarity
+                            final_score = calculate_similarity(p_features, final_feats)
                             
+                            # Visualisasi Hasil
+                            if final_score >= 80:
+                                color = "#2ecc71" # Hijau
+                                msg = "MATCHING BANGET! (Vibe Serupa)"
+                            elif final_score >= 50:
+                                color = "#f1c40f" # Kuning
+                                msg = "Lumayan Mirip..."
                             else:
-                                st.warning("⚠️ Lagu target ini tidak ada di database Kaggle 1.2M.")
-                                st.info("Coba lagu yang lebih mainstream/lama.")
-                                
+                                color = "#e74c3c" # Merah
+                                msg = "Jauh Banget (Beda Genre)"
+                            
+                            st.markdown(f"<h1 style='color:{color}'>{final_score:.1f}%</h1>", unsafe_allow_html=True)
+                            st.progress(int(final_score))
+                            st.write(f"**Vibe Check:** {msg}")
+                            
+                            # Debugging Data
+                            with st.expander("Lihat Data Angka"):
+                                st.write(f"Fitur Audio: {final_feats}")
+                        else:
+                            st.error("❌ Gagal Total.")
+                            st.warning("Data lagu ini tidak bisa diambil dari Spotify API (Dibatasi/403) DAN tidak ada di Database CSV.")
+                            st.info("Coba lagu lain yang lebih umum.")
+
                     except Exception as e:
-                        st.error(f"Gagal mengambil data lagu: {e}")
+                        st.error(f"Error Link/Koneksi: {e}")
             else:
                 st.error("Gagal membaca isi playlist atau tidak ada lagu yang cocok di database.")
