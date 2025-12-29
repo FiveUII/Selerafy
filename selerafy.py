@@ -5,322 +5,199 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.linear_model import LinearRegression
-import re
-import matplotlib.pyplot as plt
-import seaborn as sns
-import random
+import plotly.graph_objects as go
 from spotipy.cache_handler import MemoryCacheHandler
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Selerafy (Pencocokan Lagu Spotify)", page_icon="🔥", layout="centered")
+st.set_page_config(page_title="Rock Recommender", layout="wide")
 
-# --- 1. SETUP SPOTIFY API ---
+# --- 1. SETUP SPOTIFY API (Opsional) ---
 try:
     CLIENT_ID = st.secrets["spotify"]["CLIENT_ID"]
     CLIENT_SECRET = st.secrets["spotify"]["CLIENT_SECRET"]
+    auth_manager = SpotifyClientCredentials(
+        client_id=CLIENT_ID, 
+        client_secret=CLIENT_SECRET,
+        cache_handler=MemoryCacheHandler()
+    )
+    sp = spotipy.Spotify(auth_manager=auth_manager)
+    HAS_SPOTIFY = True
 except Exception:
-    st.error("❌ File secrets.toml belum disetting.")
-    st.stop()
+    HAS_SPOTIFY = False
 
-# --- 2. FUNGSI MEMBERSIHKAN NAMA LAGU ---
-def clean_track_name(name):
-    if not isinstance(name, str): return ""
-    name = name.lower()
-    name = re.sub(r'\([^)]*\)', '', name) # Hapus (...)
-    name = re.sub(r'\[[^]]*\]', '', name) # Hapus [...]
-    name = name.replace('feat.', '').replace('remastered', '').replace('remix', '').replace('-', '')
-    return " ".join(name.split())
-
-# --- 3. LOAD DATABASE (DIPERBAIKI: Menambah Fitur Penting) ---
+# --- 2. LOAD & PROCESS DATABASE ---
 @st.cache_resource
-def load_database_monster():
+def load_data():
     try:
-        # Pastikan file CSV ada di folder yang sama
-        df = pd.read_csv('dataset_spotify_tracks.csv')
-        df.columns = [c.lower() for c in df.columns]
+        df = pd.read_csv('rock_track.csv')
         
-        name_col = 'name' if 'name' in df.columns else 'track_name'
-        if name_col not in df.columns:
-            st.error("❌ Kolom nama lagu tidak ditemukan.")
-            return None, None
-
-        # FITUR YANG LEBIH LENGKAP UNTUK AKURASI
-        required_features = [
-            'danceability', 'energy', 'valence', 'acousticness', 
-            'loudness', 'tempo', 'instrumentalness'
-        ]
+        # 1. Ubah semua nama kolom jadi huruf kecil (Track -> track, Artist -> artist)
+        df.columns = [c.lower().strip() for c in df.columns]
         
-        # Buat Dictionary agar pencarian Cepat
-        song_lookup = {}
+        # 2. Cek apakah kolom 'track' dan 'artist' ada (Sesuai CSV Anda)
+        if 'track' not in df.columns:
+            st.error("❌ Kolom 'Track' tidak ditemukan di CSV.")
+            return None, None, None
+            
+        # 3. Fitur Audio yang akan dipakai
+        # Pastikan nama ini cocok dengan CSV (setelah di-lowercase)
+        feature_cols = ['danceability', 'energy', 'valence', 'acousticness', 
+                       'loudness', 'tempo', 'instrumentalness']
         
-        # Kita iterasi data
-        for index, row in df.iterrows():
-            if pd.notna(row[name_col]):
-                clean_name = clean_track_name(row[name_col])
-                if clean_name not in song_lookup:
-                    # Simpan list fitur sesuai urutan required_features
-                    feats = []
-                    valid = True
-                    for col in required_features:
-                        if col in df.columns:
-                            feats.append(row[col])
-                        else:
-                            valid = False
-                    if valid:
-                        song_lookup[clean_name] = feats
+        # 4. Bersihkan data
+        # Hapus baris yang kosong di kolom fitur
+        df = df.dropna(subset=feature_cols)
         
-        return df, song_lookup, required_features
-
-    except FileNotFoundError:
-        st.error("⚠️ File 'dataset_spotify_tracks.csv' tidak ditemukan.")
-        return None, None, None
-
-# Load Database
-with st.spinner("Sedang memuat database & mengindeks fitur audio..."):
-    df_database, song_dict, feature_cols = load_database_monster()
-
-# --- 4. ENGINE PERHITUNGAN BARU (COSINE + NORMALISASI) ---
-def calculate_similarity(playlist_features, target_features):
-    """
-    Menghitung kemiripan menggunakan Cosine Similarity dengan Normalisasi.
-    """
-    # 1. Gabungkan data untuk normalisasi bareng
-    # playlist_features adalah List of Lists, target_features adalah List tunggal
-    all_data = playlist_features + [target_features]
-    
-    df_all = pd.DataFrame(all_data)
-    
-    # 2. Normalisasi (Skala 0-1)
-    # Ini PENTING supaya Tempo (120) tidak memakan Energy (0.8)
-    scaler = MinMaxScaler()
-    df_normalized = scaler.fit_transform(df_all)
-    
-    # 3. Pisahkan kembali
-    playlist_norm = df_normalized[:-1] # Semua baris kecuali terakhir
-    target_norm = df_normalized[-1].reshape(1, -1) # Baris terakhir
-    
-    # 4. Hitung Cosine Similarity
-    # Mengukur rata-rata kemiripan target terhadap setiap lagu di playlist
-    similarities = cosine_similarity(playlist_norm, target_norm)
-    mean_score = np.mean(similarities) # Ambil rata-ratanya
-    
-    return mean_score * 100 # Jadikan persen
-
-# --- 5. FUNGSI GET PLAYLIST DARI SPOTIFY ---
-def get_playlist_features(playlist_url, sp, lookup_dict):
-    try:
-        pid = playlist_url.split("/")[-1].split("?")[0]
-        results = sp.playlist_tracks(pid, limit=50)
+        # Hapus duplikat lagu (berdasarkan judul dan artis)
+        if 'artist' in df.columns:
+            df = df.drop_duplicates(subset=['track', 'artist'])
+        else:
+            df = df.drop_duplicates(subset=['track'])
+            
+        df = df.reset_index(drop=True)
         
-        found_data = []
-        found_names = []
-        missed_count = 0
+        # 5. Normalisasi Data (Penting untuk Cosine Similarity)
+        scaler = MinMaxScaler()
+        scaled_features = scaler.fit_transform(df[feature_cols])
         
-        for item in results['items']:
-            track = item.get('track')
-            if track:
-                real_name = track['name']
-                search_key = clean_track_name(real_name)
-                
-                # Cari di Database Kaggle
-                features = lookup_dict.get(search_key)
-                
-                if features:
-                    found_data.append(features)
-                    found_names.append(real_name)
-                else:
-                    missed_count += 1
-        
-        return found_data, found_names, missed_count
+        return df, scaled_features, feature_cols
 
     except Exception as e:
-        return [], [], 0
+        st.error(f"Error memuat data: {e}")
+        return None, None, None
 
-# --- 6. USER INTERFACE (UI) ---
+df, scaled_features, feature_cols = load_data()
 
-st.title("🔥 Selerafy (Cocokkan Musik Sesuai Playlistmu!)")
-st.markdown("Algoritma: **Cosine Similarity + Normalisasi Data**")
+# --- 3. FUNGSI REKOMENDASI ---
+def get_recommendations(song_name, artist_name=None, top_n=5):
+    # Cari index lagu yang dipilih user
+    if artist_name and 'artist' in df.columns:
+        mask = (df['track'] == song_name) & (df['artist'] == artist_name)
+    else:
+        mask = df['track'] == song_name
+        
+    if mask.sum() == 0:
+        return None, None, None
+        
+    idx = df[mask].index[0]
+    
+    # Ambil vektor fitur lagu tersebut
+    target_vector = scaled_features[idx].reshape(1, -1)
+    
+    # Hitung kemiripan dengan SEMUA lagu lain
+    similarity_scores = cosine_similarity(target_vector, scaled_features).flatten()
+    
+    # Urutkan index dari skor tertinggi
+    similar_indices = similarity_scores.argsort()[::-1][1:top_n+1]
+    
+    return df.iloc[similar_indices], similarity_scores[similar_indices], idx
 
-if song_dict:
-    def get_spotify_client():
-        try:
-            # cache_handler=MemoryCacheHandler() artinya token cuma disimpan di RAM sementara
-            # Begitu aplikasi restart/rerun, token lama dibuang. Selalu dapat token baru.
-            auth_manager = SpotifyClientCredentials(
-                client_id=CLIENT_ID, 
-                client_secret=CLIENT_SECRET,
-                cache_handler=MemoryCacheHandler() 
-            )
-            return spotipy.Spotify(auth_manager=auth_manager)
-        except Exception as e:
-            st.error(f"Gagal login Spotify: {e}")
-            return None
+# --- 4. VISUALISASI RADAR CHART ---
+def plot_radar_chart(track_idx, rec_indices):
+    categories = feature_cols
+    
+    fig = go.Figure()
+    
+    # Data Lagu Pilihan User
+    user_vals = scaled_features[track_idx].tolist()
+    user_vals.append(user_vals[0]) # Menutup loop
+    
+    fig.add_trace(go.Scatterpolar(
+        r=user_vals,
+        theta=categories + [categories[0]],
+        fill='toself',
+        name='Pilihanmu',
+        line_color='blue'
+    ))
+    
+    # Rata-rata Rekomendasi
+    rec_vals = np.mean(scaled_features[rec_indices], axis=0).tolist()
+    rec_vals.append(rec_vals[0])
+    
+    fig.add_trace(go.Scatterpolar(
+        r=rec_vals,
+        theta=categories + [categories[0]],
+        fill='toself',
+        name='Rekomendasi',
+        line_color='orange',
+        opacity=0.7
+    ))
 
-    # Panggil fungsinya
-    sp = get_spotify_client()
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        showlegend=True,
+        height=400,
+        margin=dict(l=40, r=40, t=40, b=40)
+    )
+    return fig
 
-    # Input Playlist
-    url = st.text_input("1. Paste Link Playlist Sumber (Contoh: Playlist Rock/Pop kamu):")
+# --- 5. USER INTERFACE ---
+st.title("🎸 Selerafy Rock Edition")
+st.caption("Unsupervised Learning: Cosine Similarity")
 
-    if url:
-        # Hapus validasi aneh sebelumnya, ganti dengan validasi standar spotify
-        if "spotify.com" not in url:
-             st.error("Link tidak valid. Harap masukkan link Spotify.")
-        else:
-            p_features, p_names, p_missed = get_playlist_features(url, sp, song_dict)
+if df is not None:
+    # Buat nama tampilan untuk Dropdown
+    if 'artist' in df.columns:
+        df['display_name'] = df['track'] + " - " + df['artist']
+    else:
+        df['display_name'] = df['track']
+        
+    song_list = df['display_name'].tolist()
+    
+    # Layout Input
+    col_input, col_btn = st.columns([3, 1])
+    with col_input:
+        selected_song_display = st.selectbox("Pilih lagu favoritmu:", song_list)
+    
+    with col_btn:
+        st.write("") # Spacer
+        st.write("") # Spacer
+        search_clicked = st.button("Cari Lagu Mirip 🔍", type="primary")
+
+    if search_clicked:
+        # Ambil data asli dari pilihan dropdown
+        row = df[df['display_name'] == selected_song_display].iloc[0]
+        selected_track = row['track']
+        selected_artist = row['artist'] if 'artist' in df.columns else None
+        
+        # Jalankan Rekomendasi
+        recommendations, scores, original_idx = get_recommendations(selected_track, selected_artist)
+        
+        if recommendations is not None:
+            st.success(f"Menemukan lagu yang mirip dengan **{selected_track}**!")
             
-            if len(p_features) > 0:
-                st.success(f"✅ Playlist terbaca! {len(p_features)} lagu ditemukan di database.")
-                with st.expander(f"Lihat {len(p_features)} lagu yang menjadi acuan:"):
-                    st.write(p_names)
+            # Bagi layar jadi 2 kolom: Kiri (Hasil), Kanan (Grafik)
+            col_res, col_chart = st.columns([1, 1])
+            
+            with col_res:
+                st.subheader("Daftar Lagu Mirip:")
+                for i, (index, row) in enumerate(recommendations.iterrows()):
+                    score_pct = scores[i] * 100
+                    track_name = row['track']
+                    artist_name = row['artist'] if 'artist' in row else ""
+                    
+                    with st.expander(f"#{i+1} {track_name} ({score_pct:.1f}%)"):
+                        st.write(f"🎤 **Artis:** {artist_name}")
+                        st.write(f"💿 **Album:** {row.get('album', '-')}")
+                        
+                        # Tampilkan Gambar Spotify (Jika API aktif)
+                        if HAS_SPOTIFY:
+                            try:
+                                q = f"track:{track_name} artist:{artist_name}"
+                                res = sp.search(q=q, type='track', limit=1)
+                                if res['tracks']['items']:
+                                    item = res['tracks']['items'][0]
+                                    st.image(item['album']['images'][0]['url'], width=100)
+                                    if item['preview_url']:
+                                        st.audio(item['preview_url'])
+                            except:
+                                pass
+            
+            with col_chart:
+                st.subheader("Analisis Audio")
+                fig = plot_radar_chart(original_idx, recommendations.index)
+                st.plotly_chart(fig, use_container_width=True)
+                st.info("Grafik ini membandingkan karakteristik audio (seperti tempo & energi) lagu pilihanmu dengan hasil rekomendasi.")
                 
-                st.write("---")
-                
-                # --- MULAI KODE VISUALISASI ---
-                with st.expander("📊 Lihat Visualisasi 'Vibe' Playlist Kamu (Linear Regression)"):
-                    st.info("Grafik ini menunjukkan pola fitur audio playlistmu (Hijau) dibanding lagu acak (Merah).")
-                    
-                    # 1. SIAPKAN DATA DUMMY UNTUK PLOT
-                    # Positif (Playlist Kamu)
-                    df_pos = pd.DataFrame(p_features, columns=feature_cols)
-                    df_pos['target'] = 10
-                    
-                    # Negatif (Ambil Sampel Random dari Database Raksasa sebagai Noise)
-                    all_values = list(song_dict.values())
-                    # Ambil 300 lagu random, atau sejumlah database jika kurang dari 300
-                    n_sample = min(300, len(all_values))
-                    random_feats = random.sample(all_values, n_sample)
-                    
-                    df_neg = pd.DataFrame(random_feats, columns=feature_cols)
-                    df_neg['target'] = 0
-                    
-                    # Gabung untuk Visualisasi
-                    df_viz = pd.concat([df_pos, df_neg])
-                    
-                    # 2. PILIH FITUR
-                    viz_col1, viz_col2 = st.columns([1, 3])
-                    with viz_col1:
-                        feature_to_plot = st.selectbox(
-                            "Pilih Sumbu X:", 
-                            ['energy', 'danceability', 'valence', 'loudness', 'acousticness', 'tempo'],
-                            index=0
-                        )
-                    
-                    # 3. BUAT PLOT
-                    with viz_col2:
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        
-                        # Scatter Plot
-                        sns.scatterplot(
-                            data=df_viz, x=feature_to_plot, y='target', 
-                            hue='target', palette={0: '#e74c3c', 10: '#2ecc71'}, 
-                            ax=ax, s=50, alpha=0.6, legend=False
-                        )
-                        
-                        # Hitung Garis Regresi (Hanya untuk fitur yang dipilih)
-                        X_v = df_viz[[feature_to_plot]]
-                        y_v = df_viz['target']
-                        model_viz = LinearRegression()
-                        model_viz.fit(X_v, y_v)
-                        
-                        # Gambar Garis
-                        x_range = np.linspace(df_viz[feature_to_plot].min(), df_viz[feature_to_plot].max(), 100).reshape(-1, 1)
-                        y_pred = model_viz.predict(x_range)
-                        ax.plot(x_range, y_pred, color='blue', linewidth=2, linestyle='--')
-                        
-                        ax.set_yticks([]) # Hilangkan angka sumbu Y biar bersih
-                        ax.set_ylabel("Kemiripan")
-                        ax.set_title(f"Distribusi {feature_to_plot.capitalize()}")
-                        
-                        st.pyplot(fig)
- # ... (Kode atas tetap sama) ...
-                
-                # --- INPUT LAGU TARGET ---
-                st.subheader("2. Bandingkan dengan Lagu Target")
-                track_url = st.text_input("Paste Link Lagu Target:")
-                
-                if track_url:
-                    # BERSIHKAN LINK DARI SPASI (PENTING!)
-                    track_url = track_url.strip() 
-                    
-                    try:
-                        # 1. Ambil ID & Metadata Lagu
-                        if "?" in track_url:
-                            tid = track_url.split("/")[-1].split("?")[0]
-                        else:
-                            tid = track_url.split("/")[-1]
-                            
-                        t_info = sp.track(tid)
-                        t_name = t_info['name']
-                        artist_name = t_info['artists'][0]['name']
-                        
-                        # Tampilkan Gambar & Nama Dulu
-                        col1, col2 = st.columns([1, 3])
-                        with col1:
-                            st.image(t_info['album']['images'][0]['url'])
-                        
-                        with col2:
-                            st.subheader(t_name)
-                            st.write(f"Artis: **{artist_name}**")
-                        
-                        # 2. PROSES PENGAMBILAN FITUR (Sistem Hybrid)
-                        final_feats = None
-                        source_msg = ""
-                        
-                        # USAHA 1: Coba Ambil Live dari Spotify API
-                        try:
-                            audio_features_raw = sp.audio_features(tid)
-                            if audio_features_raw and audio_features_raw[0]:
-                                raw = audio_features_raw[0]
-                                final_feats = [
-                                    raw['danceability'], raw['energy'], raw['valence'], 
-                                    raw['acousticness'], raw['loudness'], raw['tempo'], 
-                                    raw['instrumentalness']
-                                ]
-                                source_msg = "✅ Data Audio: LIVE dari Spotify API"
-                        except Exception as e:
-                            # Kalau 403/Error, diam saja dan lanjut ke rencana B
-                            print(f"Gagal ambil live: {e}") 
-                        
-                        # USAHA 2: Kalau Live Gagal, Cari di Database CSV (Kaggle)
-                        if final_feats is None:
-                            t_key = clean_track_name(t_name)
-                            final_feats = song_dict.get(t_key)
-                            if final_feats:
-                                source_msg = "⚠️ Gagal akses API Live (Error 403), tapi data ditemukan di Database CSV!"
-                        
-                        # 3. HITUNG & TAMPILKAN HASIL
-                        if final_feats:
-                            st.caption(source_msg)
-                            
-                            # Hitung Cosine Similarity
-                            final_score = calculate_similarity(p_features, final_feats)
-                            
-                            # Visualisasi Hasil
-                            if final_score >= 80:
-                                color = "#2ecc71" # Hijau
-                                msg = "MATCHING BANGET! (Vibe Serupa)"
-                            elif final_score >= 50:
-                                color = "#f1c40f" # Kuning
-                                msg = "Lumayan Mirip..."
-                            else:
-                                color = "#e74c3c" # Merah
-                                msg = "Jauh Banget (Beda Genre)"
-                            
-                            st.markdown(f"<h1 style='color:{color}'>{final_score:.1f}%</h1>", unsafe_allow_html=True)
-                            st.progress(int(final_score))
-                            st.write(f"**Vibe Check:** {msg}")
-                            
-                            # Debugging Data
-                            with st.expander("Lihat Data Angka"):
-                                st.write(f"Fitur Audio: {final_feats}")
-                        else:
-                            st.error("❌ Gagal Total.")
-                            st.warning("Data lagu ini tidak bisa diambil dari Spotify API (Dibatasi/403) DAN tidak ada di Database CSV.")
-                            st.info("Coba lagu lain yang lebih umum.")
-
-                    except Exception as e:
-                        st.error(f"Error Link/Koneksi: {e}")
-            else:
-                st.error("Gagal membaca isi playlist atau tidak ada lagu yang cocok di database.")
+        else:
+            st.error("Gagal menemukan lagu tersebut di database.")
