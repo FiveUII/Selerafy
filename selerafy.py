@@ -147,7 +147,7 @@ if df is not None:
     # Layout Input
     col_input, col_btn = st.columns([3, 1])
     with col_input:
-        selected_song_display = st.selectbox("Pilih lagu favoritmu:", song_list)
+        selected_song_display = st.selectbox("Pilih / Ketik Lagu Rock Favoritmu:", song_list)
     
     with col_btn:
         st.write("") # Spacer
@@ -169,18 +169,31 @@ if df is not None:
             # Bagi layar jadi 2 kolom: Kiri (Hasil), Kanan (Grafik)
             col_res, col_chart = st.columns([1, 1])
             
+# ... (Bagian atas kode sama) ...
+            
             with col_res:
                 st.subheader("Daftar Lagu Mirip:")
+                
+                # Loop hasil rekomendasi
                 for i, (index, row) in enumerate(recommendations.iterrows()):
                     score_pct = scores[i] * 100
                     track_name = row['track']
-                    artist_name = row['artist'] if 'artist' in row else ""
+                    artist_name = row.get('artist', '')
                     
+                    # --- LOGIKA LINK SPOTIFY ---
+                    # 1. Cek apakah di CSV ada kolom 'track_id' atau 'id'
+                    if 'track_id' in row:
+                        spotify_url = f"https://open.spotify.com/track/{row['track_id']}"
+                    elif 'id' in row:
+                        spotify_url = f"https://open.spotify.com/track/{row['id']}"
+                    else:
+                        # 2. Jika tidak ada ID, buat Link Pencarian Otomatis
+                        query = f"{track_name} {artist_name}".replace(" ", "%20")
+                        spotify_url = f"https://open.spotify.com/search/{query}"
+
                     with st.expander(f"#{i+1} {track_name} ({score_pct:.1f}%)"):
-                        st.write(f"🎤 **Artis:** {artist_name}")
-                        st.write(f"💿 **Album:** {row.get('album', '-')}")
+                        st.write(f"Artis: **{artist_name}**")
                         
-                        # Tampilkan Gambar Spotify (Jika API aktif)
                         if HAS_SPOTIFY:
                             try:
                                 q = f"track:{track_name} artist:{artist_name}"
@@ -192,6 +205,9 @@ if df is not None:
                                         st.audio(item['preview_url'])
                             except:
                                 pass
+                            
+                        # TOMBOL LINK
+                        st.link_button("Putar di Spotify", spotify_url)
             
             with col_chart:
                 st.subheader("Analisis Audio")
