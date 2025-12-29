@@ -1,14 +1,10 @@
 Biar bisa jalan
 
 Download datasetnya disini :
-https://www.kaggle.com/datasets/rodolfofigueroa/spotify-12m-songs
+https://www.kaggle.com/datasets/thebumpkin/14400-classic-rock-tracks-with-spotify-data?resource=download
 , download yang zip
-, lalu rename datasetnya menjadi dataset_spotify_tracks.csv
-, file asli 400 MB (x_x) 1.2+ juta lagu spotify.
+, lalu rename datasetnya menjadi rock_track.csv.
 
-Ribet banget infokan jasa kompres dataset tapi tetap csv wkwk.
-
-Ok Google "Can you compress a dataset file without compressing" 
 
 Buat API spotify di:
 developer.spotify.com
