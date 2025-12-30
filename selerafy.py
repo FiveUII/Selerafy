@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 from spotipy.cache_handler import MemoryCacheHandler
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Rock Recommender", layout="wide")
+st.set_page_config(page_title="Selerafy Rock Edition", layout="wide")
 
 # --- CUSTOM CSS (TEMA SPOTIFY) ---
 st.markdown("""
