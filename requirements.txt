@@ -1,6 +1,9 @@
 streamlit
 pandas
 numpy
-spotipy
 scikit-learn
-plotly
+hdbscan
+umap-learn
+matplotlib
+seaborn
+spotipy
