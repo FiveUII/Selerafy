@@ -1,7 +1,6 @@
 streamlit
 pandas
 numpy
+spotipy
 scikit-learn
 plotly
-spotipy
-spotipy
