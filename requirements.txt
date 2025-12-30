@@ -7,3 +7,4 @@ umap-learn
 matplotlib
 seaborn
 spotipy
+plotly
