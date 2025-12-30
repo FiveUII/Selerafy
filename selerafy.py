@@ -11,6 +11,53 @@ from spotipy.cache_handler import MemoryCacheHandler
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Rock Recommender", layout="wide")
 
+# --- CUSTOM CSS (TEMA SPOTIFY) ---
+st.markdown("""
+<style>
+    /* Mengubah background utama */
+    .stApp {
+        background-color: #191414;
+    }
+    
+    /* Mengubah warna teks default */
+    h1, h2, h3, h4, h5, h6, p, div, span {
+        color: #FFFFFF !important;
+    }
+    
+    /* Mengubah warna Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #000000;
+    }
+    
+    /* Mengubah warna tombol (Primary Button) */
+    div.stButton > button:first-child {
+        background-color: #1DB954;
+        color: white;
+        border-radius: 20px;
+        border: none;
+        font-weight: bold;
+    }
+    
+    /* Efek hover pada tombol */
+    div.stButton > button:first-child:hover {
+        background-color: #1ed760;
+        color: white;
+    }
+    
+    /* Mengubah warna input text */
+    div[data-baseweb="input"] > div {
+        background-color: #282828;
+        color: white;
+        border-color: #1DB954;
+    }
+    input {
+        color: white;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ... Lanjutkan dengan kode load_data dan lainnya ...
+
 # --- 1. SETUP SPOTIFY API (Opsional) ---
 try:
     CLIENT_ID = st.secrets["spotify"]["CLIENT_ID"]
